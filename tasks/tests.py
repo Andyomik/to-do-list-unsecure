@@ -95,3 +95,10 @@ class TaskViewsTest(TestCase):
 
         self.assertEqual(Task.objects.count(), 0)
         self.assertRedirects(response, "/")
+
+
+class TestVolontairementCasse(TestCase):
+    """Test volontairement faux pour verifier que la CI bloque le deploiement"""
+
+    def test_doit_echouer(self):
+        self.assertEqual(1 + 1, 3)
