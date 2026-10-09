@@ -1,0 +1,201 @@
+# TP M2 DevSecOps J1 - deploiement + durcissement de la todolist
+#   ansible-playbook deploy_app.yml -i inventory.yaml
+#   ansible-playbook deploy_app.yml -i inventory.yaml --skip-tags hardening   (sans durcissement)
+
+- name: Deploiement de la todolist
+  hosts: my_infra
+  become: true
+
+  vars:
+    app_repo: https://github.com/Andyomik/to-do-list-unsecure.git
+    app_version: main
+    app_user: todolist
+    app_home: /opt/todolist
+    app_src: /opt/todolist/app
+    app_venv: /opt/todolist/venv
+
+  handlers:
+    - name: Restart todolist
+      ansible.builtin.systemd_service:
+        name: todolist
+        state: restarted
+        daemon_reload: true
+
+    - name: Restart sshd
+      ansible.builtin.systemd_service:
+        name: ssh
+        state: restarted
+
+    - name: Reload sysctl
+      ansible.builtin.command: sysctl --system
+      changed_when: true
+
+  tasks:
+    - name: Ex 7 - ping
+      ansible.builtin.ping:
+
+    # ---------- Ex 8 / 9 : installation de l'application ----------
+    - name: Paquets necessaires
+      ansible.builtin.apt:
+        name: [git, python3-venv, python3-pip, acl]
+        update_cache: true
+
+    - name: Ex 17 - utilisateur dedie todolist (sans shell, sans sudo)
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        system: true
+        home: "{{ app_home }}"
+        shell: /usr/sbin/nologin
+
+    - name: Ex 9 - sources depuis GitHub (branche main)
+      ansible.builtin.git:
+        repo: "{{ app_repo }}"
+        dest: "{{ app_src }}"
+        version: "{{ app_version }}"
+        force: true
+      become_user: "{{ app_user }}"
+      notify: Restart todolist
+
+    - name: Dependances Python (versions du Pipfile) + Gunicorn
+      ansible.builtin.pip:
+        name: [django==6.0, pyyaml==5.3.1, requests==2.19.1, gunicorn]
+        virtualenv: "{{ app_venv }}"
+        virtualenv_command: python3 -m venv
+      become_user: "{{ app_user }}"
+
+    # ---------- Ex 12 : mode production sur app-prod1 ----------
+    - name: Ex 12 - DEBUG = False en prod
+      ansible.builtin.lineinfile:
+        path: "{{ app_src }}/todo/settings.py"
+        regexp: '^DEBUG ='
+        line: "DEBUG = False"
+      become_user: "{{ app_user }}"
+      when: app_env == "prod"
+      notify: Restart todolist
+
+    - name: Migration de la base SQLite
+      ansible.builtin.command:
+        cmd: "{{ app_venv }}/bin/python manage.py migrate --noinput"
+        chdir: "{{ app_src }}"
+      become_user: "{{ app_user }}"
+      register: migrate
+      changed_when: "'No migrations to apply' not in migrate.stdout"
+
+    # ---------- Ex 13 : service systemd ----------
+    - name: Ex 13 - service todolist.service
+      ansible.builtin.template:
+        src: templates/todolist.service.j2
+        dest: /etc/systemd/system/todolist.service
+        mode: "0644"
+      notify: Restart todolist
+
+    - name: Ex 13 - service active au boot et demarre
+      ansible.builtin.systemd_service:
+        name: todolist
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: Ex 16 - grub-pc connait le disque de la VM (sinon l'upgrade echoue)
+      ansible.builtin.shell: |
+        disk=$(lsblk -dno NAME,TYPE | awk '$2=="disk"{print $1; exit}')
+        echo "grub-pc grub-pc/install_devices multiselect /dev/$disk" | debconf-set-selections
+        dpkg --configure -a
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      changed_when: false
+      tags: hardening
+
+    # ---------- Ex 16 : mises a jour ----------
+    - name: Ex 16 - apt update + upgrade
+      ansible.builtin.apt:
+        update_cache: true
+        upgrade: dist
+      tags: hardening
+
+    - name: Ex 16 - unattended-upgrades
+      ansible.builtin.apt:
+        name: unattended-upgrades
+      tags: hardening
+
+    - name: Ex 16 - activation des mises a jour automatiques
+      ansible.builtin.copy:
+        src: files/20auto-upgrades
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: "0644"
+      tags: hardening
+
+    # ---------- Ex 14 : SSH ----------
+    - name: Ex 14 - configuration sshd (testee par sshd -t avant d'etre posee)
+      ansible.builtin.template:
+        src: templates/sshd_hardening.conf.j2
+        dest: /etc/ssh/sshd_config.d/00-hardening.conf
+        mode: "0600"
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Restart sshd
+      tags: hardening
+
+    # ---------- Ex 15 : pare-feu ----------
+    - name: Ex 15 - installation UFW
+      ansible.builtin.apt:
+        name: ufw
+      tags: hardening
+
+    - name: Ex 15 - autoriser SSH et HTTP
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: ["22", "80"]
+      tags: hardening
+
+    - name: Ex 15 - deny incoming / allow outgoing, activation
+      community.general.ufw:
+        state: enabled
+        direction: "{{ item.direction }}"
+        default: "{{ item.policy }}"
+      loop:
+        - { direction: incoming, policy: deny }
+        - { direction: outgoing, policy: allow }
+      tags: hardening
+
+    # ---------- Ex 18 : Lynis + 3 findings ----------
+    - name: Ex 18 - installation de Lynis
+      ansible.builtin.apt:
+        name: lynis
+
+    - name: Ex 18 - finding KRNL-6000 (sysctl)
+      ansible.builtin.copy:
+        src: files/90-hardening.conf
+        dest: /etc/sysctl.d/90-hardening.conf
+        mode: "0644"
+      notify: Reload sysctl
+      tags: hardening
+
+    - name: Ex 18 - finding AUTH-9286 / AUTH-9328 (login.defs)
+      ansible.builtin.lineinfile:
+        path: /etc/login.defs
+        regexp: "^{{ item.key }}\\s"
+        line: "{{ item.key }}\t{{ item.value }}"
+      loop:
+        - { key: PASS_MAX_DAYS, value: "90" }
+        - { key: PASS_MIN_DAYS, value: "1" }
+        - { key: UMASK, value: "027" }
+      tags: hardening
+
+    # Le finding SSH-7408 est corrige dans templates/sshd_hardening.conf.j2
+
+    - name: Application des changements avant le test
+      ansible.builtin.meta: flush_handlers
+
+    # ---------- Ex 11 : controle automatique ----------
+    - name: Ex 11 - l'application repond sur http://IP
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}/"
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      register: result
+      retries: 5
+      delay: 3
+      until: result.status == 200

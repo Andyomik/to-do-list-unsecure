@@ -1,0 +1,16 @@
+# Ex 14 : authentification
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AllowUsers admin
+
+# Ex 18 - finding Lynis SSH-7408
+MaxAuthTries 3
+X11Forwarding no
+AllowTcpForwarding no
+AllowAgentForwarding no
+ClientAliveCountMax 2
+LogLevel VERBOSE
+MaxSessions 2
+TCPKeepAlive no

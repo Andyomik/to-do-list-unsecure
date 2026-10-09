@@ -1,0 +1,16 @@
+[Unit]
+Description=Todolist Django (Gunicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ app_src }}
+ExecStart={{ app_venv }}/bin/gunicorn --workers 2 --bind 0.0.0.0:80 todo.wsgi:application
+Restart=on-failure
+# Ex 17 : utilisateur sans droits admin, seule permission donnee = ecouter sur le port 80
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
