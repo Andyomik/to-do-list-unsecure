@@ -58,7 +58,7 @@
 
     - name: Dependances Python (versions du Pipfile) + Gunicorn
       ansible.builtin.pip:
-        name: [django==6.0, pyyaml==5.3.1, requests==2.19.1, gunicorn]
+        name: [django==6.0.8, pyyaml==6.0.2, requests==2.33.0, gunicorn]
         virtualenv: "{{ app_venv }}"
         virtualenv_command: python3 -m venv
       become_user: "{{ app_user }}"
@@ -73,11 +73,22 @@
       when: app_env == "prod"
       notify: Restart todolist
 
+    - name: J2 Ex 14 - secrets de l'application generes sur le serveur (hors Git)
+      ansible.builtin.shell: |
+        umask 077
+        echo "DJANGO_SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(50))')" > /etc/todolist.env
+        echo "ADMIN_PASSWORD=$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')" >> /etc/todolist.env
+      args:
+        creates: /etc/todolist.env
+      notify: Restart todolist
+
     - name: Migration de la base SQLite
       ansible.builtin.command:
         cmd: "{{ app_venv }}/bin/python manage.py migrate --noinput"
         chdir: "{{ app_src }}"
       become_user: "{{ app_user }}"
+      environment:
+        DJANGO_SECRET_KEY: migration-uniquement
       register: migrate
       changed_when: "'No migrations to apply' not in migrate.stdout"
 

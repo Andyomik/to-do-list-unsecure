@@ -7,6 +7,7 @@ Wants=network-online.target
 User={{ app_user }}
 Group={{ app_user }}
 WorkingDirectory={{ app_src }}
+EnvironmentFile=/etc/todolist.env
 ExecStart={{ app_venv }}/bin/gunicorn --workers 2 --bind 0.0.0.0:80 todo.wsgi:application
 Restart=on-failure
 # Ex 17 : utilisateur sans droits admin, seule permission donnee = ecouter sur le port 80
